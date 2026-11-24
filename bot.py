@@ -9,8 +9,8 @@ BOT_TOKEN = "1780244500:ynwsVbg3UOT8ceBWXxShNAk9j9nqTr_E6ti"
 NYX_API_BASE = "https://nyxgram.new.tg"
 
 # ВНИМАТЕЛЬНО ПРОВЕРЬ URL! Он должен быть вида https://xxxx.supabase.co
-SUPABASE_URL = "https://xktkhtxdmjibqlsbkpq.supabase.co" 
-SUPABASE_KEY = "sb_publishable_6R6LPZooWoTfoyEm9BErgQ_8NnHCYzg"
+SUPABASE_URL = "https://mjmjyadfylzixxriohwb.supabase.co" 
+SUPABASE_KEY = "sb_publishable_XNrmjJugklgR23XJHeerNw_h370GCle"
 
 MAIN_ADMIN_ID = 1780243908  # Твой ID
 CHECK_INTERVAL = 2.0
