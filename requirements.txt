@@ -1,4 +1,4 @@
 flask
 aiohttp
-aiogram
+aiogram>=3.13.0
 requests
