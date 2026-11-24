@@ -100,7 +100,18 @@ def fetch_available_gifts():
     except:
         return []
 
+# --- ЗАЩИТА ОТ СПАМА ---
+last_alert_time = 0
+
 def send_alert_to_admins(gift):
+    global last_alert_time
+    
+    # Если база лежит, не спамим чаще, чем раз в 5 минут
+    if not is_known("test_connection"):
+        if time.time() - last_alert_time < 300:
+            return
+        last_alert_time = time.time()
+
     gift_id = str(gift.get("id", "unknown"))
     name = gift.get("name", "Без названия")
     price = gift.get("price", "?")
@@ -162,7 +173,6 @@ def handle_message(message):
             send_message(chat_id, f"⛔️ У тебя нет доступа.\nНапиши @inoagent и скинь свой ID: <code>{chat_id}</code>")
         return
 
-    # Если нет доступа — игнор
     if not has_access:
         send_message(chat_id, "⛔️ У тебя нет доступа. Напиши @inoagent.")
         return
