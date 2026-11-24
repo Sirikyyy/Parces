@@ -2,6 +2,7 @@ import asyncio
 import aiohttp
 import requests
 import threading
+import os
 from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart, Command
@@ -22,19 +23,22 @@ MAIN_ADMIN_ID = 1780243908
 CHECK_INTERVAL = 2.0
 # ============================================
 
-# Flask для Render (Health Check)
+# Flask для Render
 app = Flask(__name__)
 
 @app.route('/')
 def health():
     return "Bot is running", 200
 
-# Настройка Aiogram
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# Aiogram
 session = AiohttpSession(api=TelegramAPIServer.from_base(NYX_API_BASE))
 bot = Bot(token=BOT_TOKEN, session=session, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
-# Заголовки для Supabase (используем requests, как просил)
 SUPABASE_HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -110,20 +114,16 @@ async def monitor_market():
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer(f"👋 Привет, {message.from_user.full_name}!\n🆔 Твой ID: <code>{message.from_user.id}</code>\nСкопируй и вставь в MAIN_ADMIN_ID.")
+    await message.answer(f"👋 Привет, {message.from_user.full_name}!\n🆔 Твой ID: <code>{message.from_user.id}</code>")
 
-def run_bot():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.create_task(monitor_market())
-    loop.run_until_complete(dp.start_polling(bot))
+async def main():
+    asyncio.create_task(monitor_market())
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    # Запускаем бота в фоновом потоке
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
+    # ЗАПУСКАЕМ FLASK В ОТДЕЛЬНОМ ПОТОКЕ
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
     
-    # Запускаем Flask для Render
-    import os
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    # ЗАПУСКАЕМ БОТА В ГЛАВНОМ ПОТОКЕ (чтобы избежать ошибки set_wakeup_fd)
+    asyncio.run(main())
