@@ -1,22 +1,15 @@
-import asyncio
-import aiohttp
+import time
 import requests
 import threading
 import os
 from flask import Flask
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart, Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties
-from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.client.telegram import TelegramAPIServer
 
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = "1780244500:ynwsVbg3UOT8ceBWXxShNAk9j9nqTr_E6ti"
 NYX_API_BASE = "https://nyxgram.new.tg"
 
-SUPABASE_URL = "https://xktkhtxdmjibqlsbkpq.supabase.co" 
+# Данные из Supabase (перепроверь URL!)
+SUPABASE_URL = "https://xktkhtxdmjjbqllsbpkp.supabase.co" 
 SUPABASE_KEY = "sb_publishable_6R6LPZooWoTfoyEm9BErgQ_8NnHCYzg"
 
 MAIN_ADMIN_ID = 1780243908
@@ -34,11 +27,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# Aiogram
-session = AiohttpSession(api=TelegramAPIServer.from_base(NYX_API_BASE))
-bot = Bot(token=BOT_TOKEN, session=session, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher()
-
+# --- Работа с Supabase (через requests) ---
 SUPABASE_HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -63,67 +52,83 @@ def mark_known(gift_id: str, name: str):
     except Exception as e:
         print(f"Ошибка БД (mark_known): {e}")
 
-async def fetch_available_gifts() -> list:
+# --- Логика бота ---
+def get_updates(offset=None):
+    url = f"{NYX_API_BASE}/bot{BOT_TOKEN}/getUpdates"
+    params = {"timeout": 30, "offset": offset}
+    try:
+        resp = requests.get(url, params=params, timeout=40)
+        return resp.json()
+    except Exception as e:
+        print(f"Ошибка getUpdates: {e}")
+        return {"ok": False}
+
+def send_message(chat_id, text):
+    url = f"{NYX_API_BASE}/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
+
+def fetch_available_gifts():
     url = f"{NYX_API_BASE}/bot{BOT_TOKEN}/getAvailableGifts"
     try:
-        async with aiohttp.ClientSession() as http_session:
-            async with http_session.get(url, timeout=10) as resp:
-                data = await resp.json()
-                if not data.get("ok"):
-                    return []
-                return data.get("result", {}).get("gifts", [])
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
+        if not data.get("ok"):
+            return []
+        return data.get("result", {}).get("gifts", [])
     except Exception as e:
-        print(f"❌ Ошибка сети: {e}")
+        print(f"Ошибка сети: {e}")
         return []
 
-async def send_alert(gift: dict):
+def send_alert(gift):
     gift_id = str(gift.get("id", "unknown"))
     name = gift.get("name", "Без названия")
     price = gift.get("price", "?")
     total_supply = gift.get("total_supply", "?")
     market_link = f"https://t.me/gift/{gift_id}" 
     
-    sticker = gift.get("sticker", {})
-    image_url = sticker.get("thumbnail", {}).get("file_id")
-
     text = f"⚡️ <b>НОВЫЙ ДРОП!</b> ⚡️\n\n🎁 <b>Подарок:</b> <a href='{market_link}'>{name}</a>\n💸 <b>Цена:</b> <code>{price} ⭐</code>\n📦 <b>Тираж:</b> <code>{total_supply} шт.</code>"
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🛒 КУПИТЬ", url=market_link)]])
+    
+    url = f"{NYX_API_BASE}/bot{BOT_TOKEN}/sendMessage"
+    keyboard = {"inline_keyboard": [[{"text": "🛒 КУПИТЬ", "url": market_link}]]}
+    payload = {"chat_id": MAIN_ADMIN_ID, "text": text, "parse_mode": "HTML", "reply_markup": keyboard}
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"Ошибка отправки: {e}")
 
-    if MAIN_ADMIN_ID != 0:
-        try:
-            if image_url:
-                await bot.send_photo(chat_id=MAIN_ADMIN_ID, photo=image_url, caption=text, reply_markup=keyboard)
-            else:
-                await bot.send_message(chat_id=MAIN_ADMIN_ID, text=text, reply_markup=keyboard)
-        except Exception as e:
-            print(f"Ошибка отправки админу: {e}")
-
-async def monitor_market():
+def monitor_market():
     print("🟢 Сканер запущен...")
     while True:
         try:
-            gifts = await fetch_available_gifts()
+            gifts = fetch_available_gifts()
             for gift in gifts:
                 gift_id = str(gift.get("id"))
                 if not is_known(gift_id):
                     mark_known(gift_id, gift.get("name", "Unknown"))
-                    await send_alert(gift)
-            await asyncio.sleep(CHECK_INTERVAL)
+                    send_alert(gift)
+            time.sleep(CHECK_INTERVAL)
         except Exception as e:
-            await asyncio.sleep(10)
+            time.sleep(10)
 
-@dp.message(CommandStart())
-async def cmd_start(message: types.Message):
-    await message.answer(f"👋 Привет, {message.from_user.full_name}!\n🆔 Твой ID: <code>{message.from_user.id}</code>")
-
-async def main():
-    asyncio.create_task(monitor_market())
-    await dp.start_polling(bot)
+def bot_loop():
+    print("🤖 Бот запущен (HTTP polling)...")
+    last_update_id = None
+    while True:
+        updates = get_updates(offset=last_update_id)
+        if updates.get("ok") and updates.get("result"):
+            for update in updates["result"]:
+                last_update_id = update["update_id"] + 1
+                if "message" in update:
+                    msg = update["message"]
+                    chat_id = msg["chat"]["id"]
+                    text = msg.get("text", "")
+                    if text == "/start":
+                        send_message(chat_id, f"👋 Привет!\n🆔 Твой ID: <code>{chat_id}</code>")
+        time.sleep(1)
 
 if __name__ == "__main__":
-    # ЗАПУСКАЕМ FLASK В ОТДЕЛЬНОМ ПОТОКЕ
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    
-    # ЗАПУСКАЕМ БОТА В ГЛАВНОМ ПОТОКЕ (чтобы избежать ошибки set_wakeup_fd)
-    asyncio.run(main())
+    # Запускаем Flask в потоке
+    threading.Thread(target=run_flask, daemon=True).start()
+    # Запускаем сканер и бота в главном потоке
+    threading.Thread(target=monitor_market, daemon=True).start()
+    bot_loop()
