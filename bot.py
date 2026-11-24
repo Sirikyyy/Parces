@@ -8,6 +8,7 @@ from flask import Flask
 BOT_TOKEN = "1780244500:ynwsVbg3UOT8ceBWXxShNAk9j9nqTr_E6ti"
 NYX_API_BASE = "https://nyxgram.new.tg"
 
+# ВНИМАТЕЛЬНО ПРОВЕРЬ URL! Он должен быть вида https://xxxx.supabase.co
 SUPABASE_URL = "https://xktkhtxdmjibqlsbkpq.supabase.co" 
 SUPABASE_KEY = "sb_publishable_6R6LPZooWoTfoyEm9BErgQ_8NnHCYzg"
 
@@ -25,7 +26,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# --- Supabase ---
+# --- Работа с Supabase ---
 SUPABASE_HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -33,7 +34,6 @@ SUPABASE_HEADERS = {
     "Prefer": "return=minimal"
 }
 
-# Проверка, является ли юзер админом (главным или из базы)
 def is_admin(user_id):
     if user_id == MAIN_ADMIN_ID:
         return True
@@ -44,18 +44,21 @@ def is_admin(user_id):
     except:
         return False
 
-# Выдать админку
 def add_admin(user_id, username):
     url = f"{SUPABASE_URL}/rest/v1/admins"
     data = {"user_id": user_id, "username": username}
-    requests.post(url, headers=SUPABASE_HEADERS, json=data, timeout=5)
+    try:
+        requests.post(url, headers=SUPABASE_HEADERS, json=data, timeout=5)
+    except Exception as e:
+        print(f"Ошибка add_admin: {e}")
 
-# Забрать админку
 def remove_admin(user_id):
     url = f"{SUPABASE_URL}/rest/v1/admins?user_id=eq.{user_id}"
-    requests.delete(url, headers=SUPABASE_HEADERS, timeout=5)
+    try:
+        requests.delete(url, headers=SUPABASE_HEADERS, timeout=5)
+    except Exception as e:
+        print(f"Ошибка remove_admin: {e}")
 
-# --- Работа с подарками ---
 def is_known(gift_id):
     url = f"{SUPABASE_URL}/rest/v1/known_gifts?gift_id=eq.{gift_id}&select=gift_id"
     try:
@@ -67,7 +70,10 @@ def is_known(gift_id):
 def mark_known(gift_id, name):
     url = f"{SUPABASE_URL}/rest/v1/known_gifts"
     data = {"gift_id": gift_id, "name": name}
-    requests.post(url, headers=SUPABASE_HEADERS, json=data, timeout=5)
+    try:
+        requests.post(url, headers=SUPABASE_HEADERS, json=data, timeout=5)
+    except Exception as e:
+        print(f"Ошибка mark_known: {e}")
 
 # --- Логика бота ---
 def get_updates(offset=None):
@@ -104,17 +110,14 @@ def send_alert_to_admins(gift):
     text = f"⚡️ <b>НОВЫЙ ДРОП!</b> ⚡️\n\n🎁 <b>Подарок:</b> <a href='{market_link}'>{name}</a>\n💸 <b>Цена:</b> <code>{price} ⭐</code>\n📦 <b>Тираж:</b> <code>{total_supply} шт.</code>"
     keyboard = {"inline_keyboard": [[{"text": "🛒 КУПИТЬ", "url": market_link}]]}
     
-    # Получаем список всех админов из базы
     admins_url = f"{SUPABASE_URL}/rest/v1/admins?select=user_id"
     try:
         admins = requests.get(admins_url, headers=SUPABASE_HEADERS, timeout=5).json()
     except:
         admins = []
     
-    # Собираем получателей: главный админ + все из базы
     recipients = [MAIN_ADMIN_ID] + [a["user_id"] for a in admins]
     
-    # Отправляем всем
     for uid in set(recipients):
         if uid == 0: continue
         url = f"{NYX_API_BASE}/bot{BOT_TOKEN}/sendMessage"
@@ -144,39 +147,47 @@ def handle_message(message):
     username = message["from"].get("username", "Аноним")
     text = message.get("text", "").strip().lower()
 
-    # 1. Проверяем, есть ли доступ у пользователя
     has_access = is_admin(chat_id)
 
-    # 2. Обработка команд
+    # --- /start ---
     if text == "/start":
         if has_access:
-            send_message(chat_id, f"👋 Привет, @{username}!\n🆔 Твой ID: <code>{chat_id}</code>\n\n"
-                                  f"✅ У тебя есть доступ к парсеру.\n"
-                                  f"📋 **Команды:**\n"
-                                  f"/status — проверить работу\n"
-                                  f"/admins — список админов")
+            msg = f"👋 Привет, @{username}!\n🆔 Твой ID: <code>{chat_id}</code>\n\n"
+            msg += "✅ У тебя есть доступ к парсеру.\n"
+            msg += "📋 **Команды:**\n/status — проверить работу\n/admins — список админов"
+            send_message(chat_id, msg)
             if chat_id == MAIN_ADMIN_ID:
                 send_message(chat_id, "👑 Ты главный админ.\n/a [ID] — выдать админку\n/d [ID] — забрать админку")
         else:
             send_message(chat_id, f"⛔️ У тебя нет доступа.\nНапиши @inoagent и скинь свой ID: <code>{chat_id}</code>")
         return
 
-    # Если нет доступа — бот игнорирует все остальные команды
+    # Если нет доступа — игнор
     if not has_access:
         send_message(chat_id, "⛔️ У тебя нет доступа. Напиши @inoagent.")
         return
 
-    # --- Команды для админов ---
+    # --- /status ---
     if text == "/status":
         try:
-            count = len(requests.get(f"{SUPABASE_URL}/rest/v1/known_gifts?select=gift_id", headers=SUPABASE_HEADERS).json())
-            send_message(chat_id, f"🟢 Сканер работает.\n📦 В базе: {count} подарков.")
-        except:
-            send_message(chat_id, "🟢 Сканер работает, но база недоступна.")
+            url = f"{SUPABASE_URL}/rest/v1/known_gifts?select=gift_id"
+            resp = requests.get(url, headers=SUPABASE_HEADERS, timeout=5)
+            if resp.status_code != 200:
+                send_message(chat_id, f"❌ Ошибка базы: HTTP {resp.status_code}\n{resp.text[:200]}")
+            else:
+                count = len(resp.json())
+                send_message(chat_id, f"🟢 Сканер работает.\n📦 В базе: {count} подарков.")
+        except Exception as e:
+            send_message(chat_id, f"❌ Ошибка подключения: {str(e)[:200]}")
+        return
 
-    elif text == "/admins":
+    # --- /admins ---
+    if text in ["/admins", "/admin"]:
         try:
-            admins = requests.get(f"{SUPABASE_URL}/rest/v1/admins?select=user_id,username", headers=SUPABASE_HEADERS).json()
+            admins = requests.get(
+                f"{SUPABASE_URL}/rest/v1/admins?select=user_id,username",
+                headers=SUPABASE_HEADERS, timeout=5
+            ).json()
             msg = f"👑 <b>Главный админ:</b> <code>{MAIN_ADMIN_ID}</code>\n\n"
             if admins:
                 msg += "📋 <b>Доп. админы:</b>\n"
@@ -185,36 +196,50 @@ def handle_message(message):
             else:
                 msg += "📋 Доп. админов нет."
             send_message(chat_id, msg)
-        except:
-            send_message(chat_id, "Ошибка получения списка.")
+        except Exception as e:
+            send_message(chat_id, f"❌ Ошибка: {str(e)[:150]}")
+        return
 
-    # --- Команды только для главного админа ---
-    elif text.startswith("/a "):
+    # --- /a (выдать админку) ---
+    if text.startswith("/a "):
         if chat_id != MAIN_ADMIN_ID:
             send_message(chat_id, "⛔️ Только главный админ может выдавать доступ.")
             return
         try:
-            new_id = int(text.split()[1])
+            parts = text.split()
+            if len(parts) < 2:
+                send_message(chat_id, "❌ Использование: /a 123456789")
+                return
+            new_id = int(parts[1])
             add_admin(new_id, "unknown")
             send_message(chat_id, f"✅ Пользователь <code>{new_id}</code> теперь админ.")
-            # Уведомляем нового админа
             send_message(new_id, "🎉 Тебе выдали доступ к парсеру! Напиши /start.")
-        except:
-            send_message(chat_id, "❌ Ошибка. Используй: /a 123456789")
+        except ValueError:
+            send_message(chat_id, "❌ ID должен быть числом.")
+        except Exception as e:
+            send_message(chat_id, f"❌ Ошибка: {str(e)[:150]}")
+        return
 
-    elif text.startswith("/d "):
+    # --- /d (забрать админку) ---
+    if text.startswith("/d "):
         if chat_id != MAIN_ADMIN_ID:
             send_message(chat_id, "⛔️ Только главный админ может забирать доступ.")
             return
         try:
-            target_id = int(text.split()[1])
+            parts = text.split()
+            if len(parts) < 2:
+                send_message(chat_id, "❌ Использование: /d 123456789")
+                return
+            target_id = int(parts[1])
             remove_admin(target_id)
             send_message(chat_id, f"🗑 Админка у <code>{target_id}</code> забрана.")
-        except:
-            send_message(chat_id, "❌ Ошибка. Используй: /d 123456789")
+        except ValueError:
+            send_message(chat_id, "❌ ID должен быть числом.")
+        except Exception as e:
+            send_message(chat_id, f"❌ Ошибка: {str(e)[:150]}")
+        return
 
-    else:
-        send_message(chat_id, "Не понял команду. Напиши /start.")
+    send_message(chat_id, "Не понял команду. Напиши /start.")
 
 def bot_loop():
     print("🤖 Бот запущен...")
