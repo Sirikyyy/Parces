@@ -177,16 +177,39 @@ def handle_message(message):
         send_message(chat_id, "⛔️ У тебя нет доступа. Напиши @inoagent.")
         return
 
-    # --- /status ---
+    # --- /status (обновленный) ---
     if text == "/status":
         try:
-            url = f"{SUPABASE_URL}/rest/v1/known_gifts?select=gift_id"
-            resp = requests.get(url, headers=SUPABASE_HEADERS, timeout=5)
-            if resp.status_code != 200:
-                send_message(chat_id, f"❌ Ошибка базы: HTTP {resp.status_code}\n{resp.text[:200]}")
-            else:
-                count = len(resp.json())
-                send_message(chat_id, f"🟢 Сканер работает.\n📦 В базе: {count} подарков.")
+            # 1. Считаем общее количество
+            count_url = f"{SUPABASE_URL}/rest/v1/known_gifts?select=gift_id"
+            count_resp = requests.get(count_url, headers=SUPABASE_HEADERS, timeout=5)
+            
+            if count_resp.status_code != 200:
+                send_message(chat_id, f"❌ Ошибка базы: HTTP {count_resp.status_code}\n{count_resp.text[:200]}")
+                return
+            
+            total_count = len(count_resp.json())
+
+            if total_count == 0:
+                send_message(chat_id, "🟢 Сканер работает.\n📦 В базе пока пусто. Ждем дропов!")
+                return
+
+            # 2. Получаем последние 10 подарков
+            list_url = f"{SUPABASE_URL}/rest/v1/known_gifts?select=gift_id,name,detected_at&order=detected_at.desc&limit=10"
+            list_resp = requests.get(list_url, headers=SUPABASE_HEADERS, timeout=5)
+            gifts = list_resp.json()
+
+            msg = f"🟢 Сканер работает.\n📦 Всего в базе: <b>{total_count}</b> подарков.\n\n"
+            msg += "📜 <b>Последние 10 подарков:</b>\n"
+            
+            for i, g in enumerate(gifts, 1):
+                name = g.get("name", "Без названия")
+                gift_id = str(g.get("gift_id", "?"))
+                short_id = gift_id[:10] + "..." if len(gift_id) > 10 else gift_id
+                msg += f"{i}. {name} (<code>{short_id}</code>)\n"
+
+            send_message(chat_id, msg)
+            
         except Exception as e:
             send_message(chat_id, f"❌ Ошибка подключения: {str(e)[:200]}")
         return
